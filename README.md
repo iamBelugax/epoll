@@ -62,7 +62,7 @@ goroutines, providing a simple echo service.
     ./epoll-server [flags]
     ```
 
-### Using Docker (if a Dockerfile is available)
+### Using Docker (Preferred)
 
 1.  **Build Image:**
 

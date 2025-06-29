@@ -1,3 +1,14 @@
 {
-  "cSpell.words": ["epoll", "GOARCH", "netgo", "Nilotpal"]
+  "cSpell.words": [
+    "dylib",
+    "epoll",
+    "EPOLLERR",
+    "EPOLLET",
+    "EPOLLHUP",
+    "EPOLLIN",
+    "GOARCH",
+    "netgo",
+    "Nilotpal"
+  ],
+  "go.toolsEnvVars": { "GOOS": "linux" }
 }

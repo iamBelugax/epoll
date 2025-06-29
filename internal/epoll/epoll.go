@@ -107,4 +107,38 @@ func (s *Server) startListener(id int) {
 		s.log.Printf("Listener %d: Error binding socket: %v\n", id, err)
 		return
 	}
+
+	// Start listening for incoming connections.
+	// syscall.SOMAXCONN is the system default backlog queue size.
+	if err := syscall.Listen(listenFd, SO_MAX_CONN); err != nil {
+		s.log.Printf("Listener %d: Error listening on socket: %v\n", id, err)
+		return
+	}
+
+	s.log.Printf("Listener %d listening on port %d\n", id, s.port)
+
+	// 2. Create a dedicated epoll instance for this goroutine.
+	epollFd, err := syscall.EpollCreate1(0) // 0 flag for default behavior
+	if err != nil {
+		s.log.Printf("Listener %d: Error creating epoll instance: %v\n", id, err)
+		return
+	}
+	// Ensure the epoll instance file descriptor is closed.
+	defer func() {
+		s.log.Printf("Listener %d: Closing epoll fd %d\n", id, epollFd)
+		if err := syscall.Close(epollFd); err != nil {
+			s.log.Printf("Listener %d: Error closing epoll fd %d: %v\n", id, epollFd, err)
+		}
+	}()
+
+	// 3. Add this listener socket to its dedicated epoll instance.
+	// Watch for incoming data (new connections for listen socket)
+	listenEvent := syscall.EpollEvent{
+		Events: syscall.EPOLLIN, // Watch for incoming data (new connections for listen socket)
+		Fd:     int32(listenFd),
+	}
+	if err := syscall.EpollCtl(epollFd, syscall.EPOLL_CTL_ADD, listenFd, &listenEvent); err != nil {
+		s.log.Printf("Listener %d: Error adding listening socket to epoll: %v\n", id, err)
+		return
+	}
 }

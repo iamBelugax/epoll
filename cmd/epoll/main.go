@@ -12,21 +12,23 @@ import (
 )
 
 var (
-	// DEFAULT_PORT is the default port the server will listen on.
+	// DEFAULT_PORT is the default port the server will listen on if not specified.
 	DEFAULT_PORT uint = 8080
-	// DEFAULT_MAX_LISTENERS is the default number of listeners to start.
+	// DEFAULT_MAX_LISTENERS is the default number of listener workers to start.
+	// It uses the system's CPU count as a sensible default to maximize parallelism.
 	DEFAULT_MAX_LISTENERS = uint(runtime.NumCPU())
 )
 
 func main() {
+	// Parse command-line flags and initialize variables.
 	port, maxListeners := initializeVariables()
 
-	// Create a new Server instance.
+	// Create a new Server instance with the configured parameters.
 	svr, err := epoll.NewServer(port, maxListeners)
 	if err != nil {
 		log.Fatalln("create server error", err)
 	}
-
+	// Ensure the server is stopped gracefully when main exits.
 	defer func() {
 		// Stop the server gracefully.
 		if err := svr.Stop(); err != nil {
@@ -47,8 +49,13 @@ func main() {
 	// Block until a stop signal is received.
 	sig := <-stopChan
 	log.Printf("Received signal %s, initiating shutdown...\n", sig)
+
+	// After receiving the signal, the deferred svr.Stop() will be called
+	// automatically when main exits.
 }
 
+// initializeVariables parses command-line flags and returns the configured
+// port and maximum number of listeners to use.
 func initializeVariables() (uint, uint) {
 	port := flag.Uint("port", DEFAULT_PORT, "Port for the server will listen on")
 	maxListeners := flag.Uint("maxListeners", DEFAULT_MAX_LISTENERS, "Number of listeners to start")

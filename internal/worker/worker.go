@@ -10,31 +10,6 @@ import (
 	"syscall"
 )
 
-// State represents the current operational state of a Worker.
-//
-// It tracks the lifecycle of a Worker through various phases from initialization
-// to execution and finally closure, allowing for proper state management and
-// validation of operations based on the current state.
-type State string
-
-// Worker represents an individual listener process that handles its own connections.
-//
-// Each Worker runs in its own goroutine with a dedicated epoll instance, allowing
-// it to independently monitor and handle multiple file descriptors efficiently.
-// Workers share the same port using SO_REUSEPORT socket option, which enables
-// the kernel to distribute incoming connections across workers.
-//
-// The internal wake-up pipe mechanism allows for graceful interruption of the
-// blocking epoll_wait call during shutdown.
-type Worker struct {
-	id        int         // A unique identifier for the worker.
-	port      uint        // The TCP port on which this worker listens.
-	wakeUpRfd int         // The read end of the wake-up pipe, used to interrupt epoll_wait.
-	wakeUpWfd int         // The write end of the wake-up pipe, used to signal worker shutdown.
-	state     State       // Current operational state (INITIALIZED, EXECUTING, or CLOSED).
-	log       *log.Logger // Logger for worker events and errors.
-}
-
 var (
 	// MAX_EVENTS is the maximum number of events to retrieve in a single epoll_wait call.
 	// This limits the batch size of events processed in each iteration of the event loop.
@@ -43,17 +18,17 @@ var (
 	// MAX_BUFFER_SIZE is the buffer size for reading data from client sockets in a single call.
 	MAX_BUFFER_SIZE = 4096
 
+	// CLOSED indicates that a Worker has been shut down and is no longer processing connections.
+	// In this state, the Worker has released its resources and cannot be restarted.
+	CLOSED State = 0
+
 	// INITIALIZED indicates that a Worker has been created but has not yet started processing connections.
 	// In this state, the Worker has been allocated resources but is not yet actively listening.
-	INITIALIZED State = "INITIALIZED"
+	INITIALIZED State = 1
 
 	// EXECUTING indicates that a Worker is actively running and processing connections.
 	// In this state, the Worker is listening for incoming connections and handling client requests.
-	EXECUTING State = "EXECUTING"
-
-	// CLOSED indicates that a Worker has been shut down and is no longer processing connections.
-	// In this state, the Worker has released its resources and cannot be restarted.
-	CLOSED State = "CLOSED"
+	EXECUTING State = 2
 
 	// ErrClosed is returned when attempting to perform operations on a Worker that has already been closed.
 	ErrWorkerClosed = errors.New("worker: operation failed because worker is already closed")

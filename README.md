@@ -37,12 +37,6 @@ model with the Linux epoll interface for optimal performance:
 - **Reduced Contention**: Each goroutine manages its own epoll instance and
   client set, minimizing lock contention.
 
-- **Efficient Event Processing**: The epoll system call enables efficient
-  monitoring of many file descriptors with minimal overhead.
-
-- **Optimized Resource Usage**: The server can handle thousands of concurrent
-  connections with minimal resource consumption.
-
 ## Prerequisites
 
 - Go 1.18 or later

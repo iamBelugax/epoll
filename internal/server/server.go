@@ -4,8 +4,10 @@ import (
 	"context"
 	"log"
 	"sync"
+	"syscall"
 )
 
+// Server holds the server configuration and manages listener goroutines.
 type Server struct {
 	port         uint
 	maxListeners uint
@@ -15,6 +17,7 @@ type Server struct {
 	cancel       context.CancelFunc
 }
 
+// New creates a new Server instance.
 func New(port, maxListeners uint) *Server {
 	context, cancel := context.WithCancel(context.Background())
 	return &Server{
@@ -36,28 +39,44 @@ func (s *Server) ListenAndServe() error {
 	for i := range total {
 		go func() {
 			defer s.wg.Done()
-			s.startListening(i + 1)
+			s.startListener(i + 1)
 		}()
 	}
 
 	return nil
 }
 
+// Stop signals the listener goroutines to stop and waits for them to finish.
 func (s *Server) Stop() error {
+	s.log.Printf("Shutting down server...")
 	s.cancel()
 	s.wg.Wait()
+	s.log.Printf("Sever shutdown complete")
 	return nil
 }
 
-func (s *Server) startListening(worker int) {
+func (s *Server) startListener(worker int) {
 	s.log.Printf("Starting worker with id %d\n", worker)
 
-	select {
-	case <-s.context.Done():
+	listenerFd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		log.Printf("Listener goroutine on port %d: Error creating socket: %v\n", s.port, err)
 		return
-	default:
-		{
-			// syscall.Socket(syscall.AF_INET)
+	}
+	defer func() {
+		if err := syscall.Close(listenerFd); err != nil {
+			log.Printf("Listener goroutine on port %d: Error closing fd: %v\n", s.port, err)
+			return
+		}
+	}()
+
+	for {
+		select {
+		case <-s.context.Done():
+			s.log.Printf("Closing worker with id %d\n", worker)
+			return
+		default:
+			continue
 		}
 	}
 }

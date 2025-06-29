@@ -3,6 +3,7 @@ package epoll
 import (
 	"context"
 	"log"
+	"net"
 	"sync"
 	"syscall"
 )
@@ -79,4 +80,31 @@ func (s *Server) startListener(id int) {
 			s.log.Printf("Listener %d: Error closing listener fd %d: %v\n", id, listenFd, err)
 		}
 	}()
+
+	// Set socket options for reusability and reusing the port.
+	// SO_REUSEADDR allows binding to an address in TIME_WAIT state.
+	if err := syscall.SetsockoptInt(listenFd, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1); err != nil {
+		s.log.Printf("Listener %d: Error setting SO_REUSEADDR: %v\n", id, err)
+		return
+	}
+
+	// SO_REUSEPORT allows multiple sockets to bind to the same address and port.
+	if err := syscall.SetsockoptInt(listenFd, syscall.SOL_SOCKET, syscall.SO_REUSEPORT, 1); err != nil {
+		s.log.Printf("Listener %d: Error setting SO_REUSEPORT: %v\n", id, err)
+		// SO_REUSEPORT might not be supported on all kernels or configurations.
+		s.log.Printf("Listener %d: SO_REUSEPORT might not be supported or enabled.\n", id)
+		return
+	}
+
+	// Bind the socket to the specified port on all interfaces (0.0.0.0).
+	ip4 := net.ParseIP("0.0.0.0")
+	addr := &syscall.SockaddrInet4{
+		Port: int(s.port),
+		Addr: [4]byte(ip4.To4()),
+	}
+
+	if err := syscall.Bind(listenFd, addr); err != nil {
+		s.log.Printf("Listener %d: Error binding socket: %v\n", id, err)
+		return
+	}
 }

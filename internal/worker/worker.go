@@ -95,6 +95,16 @@ func New(id int, port uint, logger *log.Logger) (*Worker, error) {
 	}, nil
 }
 
+// State returns the current operational state of the worker.
+func (w *Worker) State() State {
+	return w.state
+}
+
+// Id returns the unique identifier of the worker.
+func (w *Worker) Id() int {
+	return w.id
+}
+
 // Start sets up the worker's listening socket, epoll instance, and runs the event loop.
 //
 // This method is the main entry point for a worker and is designed to be run as a

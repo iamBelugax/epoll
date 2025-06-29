@@ -8,21 +8,6 @@ import (
 	"github.com/iamNilotpal/epoll/internal/worker"
 )
 
-// Server represents an epoll-based TCP server that leverages multiple worker goroutines
-// to handle connections. Each worker uses Linux's epoll mechanism to efficiently
-// monitor multiple file descriptors with a single thread.
-//
-// The design pattern follows a leader/follower model where multiple workers
-// listen on the same port using SO_REUSEPORT, allowing the kernel to distribute
-// incoming connections across listeners for better performance and load balancing.
-type Server struct {
-	port         uint             // TCP port on which all listeners will bind.
-	maxListeners uint             // The number of concurrent listener workers to create.
-	log          *log.Logger      // Logger for server events and errors.
-	wg           sync.WaitGroup   // WaitGroup to track and wait for all listener goroutines.
-	workers      []*worker.Worker // Collection of worker instances, each running in its own goroutine.
-}
-
 // NewServer initializes a new Server with the given configuration parameters.
 //
 // This factory function creates a server instance along with its worker instances,
@@ -32,20 +17,17 @@ type Server struct {
 // Parameters:
 //   - port: TCP port on which all listeners will bind
 //   - maxListeners: Number of concurrent listener workers to create
-//
-// Returns:
-//   - Pointer to initialized Server and any error encountered during setup
 func NewServer(port, maxListeners uint) (*Server, error) {
-	// Initialize the slice of workers with the capacity of maxListeners
+	// Initialize the slice of workers with the capacity of maxListeners.
 	workers := make([]*worker.Worker, maxListeners)
-	// Create a standard logger that writes to stdout with time and file information
+	// Create a standard logger that writes to stdout with time and file information.
 	logger := log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
 
-	// Create each worker with its own ID but sharing the same port
+	// Create each worker with its own ID but sharing the same port.
 	for i := range maxListeners {
 		worker, err := worker.New(int(i+1), port, logger)
 		if err != nil {
-			// If any worker creation fails, return error immediately.
+			// If any worker creation fails, stop all initialized workers and return error.
 			for _, worker := range workers {
 				if worker != nil {
 					if err := worker.Stop(); err != nil {
@@ -58,7 +40,6 @@ func NewServer(port, maxListeners uint) (*Server, error) {
 		workers[i] = worker
 	}
 
-	// Return the fully initialized server ready to be started.
 	return &Server{
 		port:         port,
 		log:          logger,
@@ -99,9 +80,6 @@ func (s *Server) ListenAndServe() error {
 // wake-up pipes in each worker that interrupt the epoll_wait syscall.
 //
 // The WaitGroup ensures we don't return until all workers have completely shut down.
-//
-// Returns:
-//   - Error if any issue occurs during shutdown
 func (s *Server) Stop() error {
 	s.log.Printf("Initiated Server Shutdown...")
 
@@ -118,4 +96,13 @@ func (s *Server) Stop() error {
 
 	s.log.Printf("Server Shutdown Completed")
 	return nil
+}
+
+// State returns the current operational status of all worker goroutines.
+func (s *Server) State() []WorkerStatus {
+	states := make([]WorkerStatus, s.maxListeners)
+	for i, worker := range s.workers {
+		states[i] = WorkerStatus{Id: worker.Id(), Status: worker.State().String()}
+	}
+	return states
 }

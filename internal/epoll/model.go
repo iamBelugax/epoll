@@ -10,10 +10,6 @@ import (
 // Server represents an epoll-based TCP server that leverages multiple worker goroutines
 // to handle connections. Each worker uses Linux's epoll mechanism to efficiently
 // monitor multiple file descriptors with a single thread.
-//
-// The design pattern follows a leader/follower model where multiple workers
-// listen on the same port using SO_REUSEPORT, allowing the kernel to distribute
-// incoming connections across listeners for better performance and load balancing.
 type Server struct {
 	port         uint             // TCP port on which all listeners will bind.
 	maxListeners uint             // The number of concurrent listener workers to create.

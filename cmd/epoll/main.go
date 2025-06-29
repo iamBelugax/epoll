@@ -8,15 +8,11 @@ import (
 	"runtime"
 	"syscall"
 
-	"github.com/iamNilotpal/epoll/internal/epoll"
+	"github.com/iamBelugaa/epoll-test/internal/epoll"
 )
 
 var (
-	// DEFAULT_PORT is the default port the server will listen on if not specified.
-	DEFAULT_PORT uint = 8080
-
-	// DEFAULT_MAX_LISTENERS is the default number of listener workers to start.
-	// It uses the system's CPU count as a sensible default to maximize parallelism.
+	DEFAULT_PORT          = uint(8080)
 	DEFAULT_MAX_LISTENERS = uint(runtime.NumCPU())
 )
 

@@ -19,3 +19,4 @@ logs/
 dist/
 
 .DS_Store
+.vscode

@@ -112,29 +112,29 @@ func (w *Worker) Start() {
 	// ============ SOCKET SETUP PHASE ============
 
 	// 1. Create a listening socket for this goroutine.
-	listenFd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+	listenerFd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
 	if err != nil {
 		w.log.Printf("Listener %d: Error creating socket: %v\n", w.id, err)
 		return
 	}
 	// Ensure the listening socket is closed when this goroutine exits.
 	defer func() {
-		w.log.Printf("Listener %d: Closing listener fd %d\n", w.id, listenFd)
-		if err := syscall.Close(listenFd); err != nil {
-			w.log.Printf("Listener %d: Error closing listener fd %d: %v\n", w.id, listenFd, err)
+		w.log.Printf("Listener %d: Closing listener fd %d\n", w.id, listenerFd)
+		if err := syscall.Close(listenerFd); err != nil {
+			w.log.Printf("Listener %d: Error closing listener fd %d: %v\n", w.id, listenerFd, err)
 		}
 	}()
 
 	// Set socket options for reusability and reusing the port.
 	// SO_REUSEADDR allows binding to an address in TIME_WAIT state.
-	if err := syscall.SetsockoptInt(listenFd, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1); err != nil {
+	if err := syscall.SetsockoptInt(listenerFd, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1); err != nil {
 		w.log.Printf("Listener %d: Error setting SO_REUSEADDR: %v\n", w.id, err)
 		return
 	}
 
 	// SO_REUSEPORT allows multiple sockets to bind to the same address and port,
 	// which is essential for our multi-worker design to distribute connection load.
-	if err := syscall.SetsockoptInt(listenFd, syscall.SOL_SOCKET, syscall.SO_REUSEPORT, 1); err != nil {
+	if err := syscall.SetsockoptInt(listenerFd, syscall.SOL_SOCKET, syscall.SO_REUSEPORT, 1); err != nil {
 		w.log.Printf("Listener %d: Error setting SO_REUSEPORT: %v\n", w.id, err)
 		// SO_REUSEPORT might not be supported on all kernels or configurations.
 		w.log.Printf("Listener %d: SO_REUSEPORT might not be supported or enabled.\n", w.id)
@@ -148,14 +148,14 @@ func (w *Worker) Start() {
 		Addr: [4]byte(ip4.To4()),
 	}
 
-	if err := syscall.Bind(listenFd, addr); err != nil {
+	if err := syscall.Bind(listenerFd, addr); err != nil {
 		w.log.Printf("Listener %d: Error binding socket: %v\n", w.id, err)
 		return
 	}
 
 	// Start listening for incoming connections.
 	// syscall.SOMAXCONN is the system default backlog queue size.
-	if err := syscall.Listen(listenFd, syscall.SOMAXCONN); err != nil {
+	if err := syscall.Listen(listenerFd, syscall.SOMAXCONN); err != nil {
 		w.log.Printf("Listener %d: Error listening on socket: %v\n", w.id, err)
 		return
 	}
@@ -182,9 +182,9 @@ func (w *Worker) Start() {
 	// Monitor for EPOLLIN events (readiness for reading/accepting new connections).
 	listenEvent := syscall.EpollEvent{
 		Events: syscall.EPOLLIN, // Watch for incoming data (new connections for listen socket).
-		Fd:     int32(listenFd),
+		Fd:     int32(listenerFd),
 	}
-	if err := syscall.EpollCtl(epollFd, syscall.EPOLL_CTL_ADD, listenFd, &listenEvent); err != nil {
+	if err := syscall.EpollCtl(epollFd, syscall.EPOLL_CTL_ADD, listenerFd, &listenEvent); err != nil {
 		w.log.Printf("Listener %d: Error adding listening socket to epoll: %v\n", w.id, err)
 		return
 	}
@@ -259,17 +259,17 @@ func (w *Worker) Start() {
 			}
 
 			// Handle the listening socket depending on shutdown state.
-			if isShuttingDown && fd == listenFd {
+			if isShuttingDown && fd == listenerFd {
 				// If shutting down, stop accepting new connections
 				// by removing the listener fd from epoll.
-				if err := syscall.EpollCtl(epollFd, syscall.EPOLL_CTL_DEL, listenFd, nil); err != nil {
-					w.log.Printf("Listener %d: Error removing listenerFd %d from epoll: %v\n", w.id, listenFd, err)
+				if err := syscall.EpollCtl(epollFd, syscall.EPOLL_CTL_DEL, listenerFd, nil); err != nil {
+					w.log.Printf("Listener %d: Error removing listenerFd %d from epoll: %v\n", w.id, listenerFd, err)
 				}
-			} else if fd == listenFd && !isShuttingDown {
+			} else if fd == listenerFd && !isShuttingDown {
 				// This is a new connection event on the listening socket.
 
 				// Accept the new connection.
-				clientFd, _, err := syscall.Accept(listenFd)
+				clientFd, _, err := syscall.Accept(listenerFd)
 				if err != nil {
 					// Accept errors can happen, e.g., if the connection is reset
 					// before accept is called. Log and continue.

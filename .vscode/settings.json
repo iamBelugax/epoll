@@ -1,17 +1,24 @@
 {
   "cSpell.words": [
     "dylib",
+    "EAGAIN",
+    "EINTR",
     "epoll",
     "EPOLLERR",
     "EPOLLET",
     "EPOLLHUP",
     "EPOLLIN",
+    "EWOULDBLOCK",
     "GOARCH",
     "goroutines",
     "netcat",
     "netgo",
     "Nilotpal",
+    "Nonblock",
+    "REUSEADDR",
     "REUSEPORT",
+    "Setsockopt",
+    "syscall",
     "tcpkali"
   ],
   "go.toolsEnvVars": { "GOOS": "linux" }

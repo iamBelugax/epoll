@@ -110,7 +110,7 @@ func (s *Server) startListener(id int) {
 
 	// Start listening for incoming connections.
 	// syscall.SOMAXCONN is the system default backlog queue size.
-	if err := syscall.Listen(listenFd, SO_MAX_CONN); err != nil {
+	if err := syscall.Listen(listenFd, syscall.SOMAXCONN); err != nil {
 		s.log.Printf("Listener %d: Error listening on socket: %v\n", id, err)
 		return
 	}
@@ -140,5 +140,80 @@ func (s *Server) startListener(id int) {
 	if err := syscall.EpollCtl(epollFd, syscall.EPOLL_CTL_ADD, listenFd, &listenEvent); err != nil {
 		s.log.Printf("Listener %d: Error adding listening socket to epoll: %v\n", id, err)
 		return
+	}
+
+	// Slice to store events returned by epoll_wait for this goroutine.
+	events := make([]syscall.EpollEvent, MAX_EVENTS)
+
+	// 4. Event loop for this listener goroutine.
+	// This loop continuously waits for and processes events from this goroutine's epoll instance.
+	for {
+		// Select statement to check for both epoll events and the stop signal.
+		select {
+		// Received stop signal, exit the goroutine.
+		case <-s.context.Done():
+			s.log.Printf("Listener %d: Received stop signal. Shutting down.\n", id)
+			return
+		default:
+			// Continue with epoll_wait if no stop signal.
+		}
+
+		// Wait for events. -1 means wait indefinitely.
+		// The ready events are placed in the 'events' slice.
+		n, err := syscall.EpollWait(epollFd, events, -1)
+		if err != nil {
+			// Handle EINTR (interrupted by signal) by continuing the loop.
+			if err == syscall.EINTR {
+				continue
+			}
+			s.log.Printf("Listener %d: Error in EpollWait: %v\n", id, err)
+			continue
+		}
+
+		// Process each ready event for this goroutine.
+		for i := range n {
+			event := events[i]
+			fd := int(event.Fd)
+
+			// Check if the event is on the listening socket.
+			if fd == listenFd {
+				// Event on the listening socket means a new connection is ready.
+				// Accept the connection. This is handled by the specific goroutine
+				// whose listener received the connection via SO_REUSEPORT.
+				clientFd, _, err := syscall.Accept(listenFd)
+				if err != nil {
+					// Accept errors can happen, e.g., if the connection is reset
+					// before accept is called. Log and continue.
+					s.log.Printf("Listener %d: Error accepting connection: %v\n", id, err)
+					continue
+				}
+
+				// Set the accepted client socket to non-blocking mode.
+				if err := syscall.SetNonblock(clientFd, true); err != nil {
+					s.log.Printf("Listener %d: Error setting clientFd %d non-blocking: %v\n", id, clientFd, err)
+					// Close the socket if setting non-blocking fails.
+					if err := syscall.Close(clientFd); err != nil {
+						s.log.Printf("Listener %d: Error closing clientFd %d after SetNonblock error: %v\n", id, clientFd, err)
+					}
+					continue
+				}
+
+				// Add the new client socket to *this* goroutine's epoll instance.
+				// We are interested in EPOLLIN (read readiness) and use EPOLLET (edge-triggered).
+				clientEvent := syscall.EpollEvent{
+					Fd:     int32(clientFd),
+					Events: syscall.EPOLLIN | syscall.EPOLLET, // Watch for read readiness (Edge-Triggered)
+				}
+				if err := syscall.EpollCtl(epollFd, syscall.EPOLL_CTL_ADD, clientFd, &clientEvent); err != nil {
+					s.log.Printf("Listener %d: Error adding clientFd %d to epoll: %v\n", id, clientFd, err)
+					// Close if adding to epoll fails.
+					if err := syscall.Close(clientFd); err != nil {
+						s.log.Printf("Listener %d: Error closing clientFd %d after EpollCtl error: %v\n", id, clientFd, err)
+					}
+					continue
+				}
+				s.log.Printf("Listener %d: Accepted new connection, clientFd: %d\n", id, clientFd)
+			}
+		}
 	}
 }

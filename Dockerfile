@@ -7,12 +7,10 @@ WORKDIR /app
 # Copy the Go module files (go.mod and go.sum) to the working directory.
 COPY go.mod ./
 
-# Copy the rest of the application source code into the working directory
-# This includes the main.go file and any other source files in the project.
+# Copy the rest of the application source code into the working directory.
 COPY . .
 
-# CGO_ENABLED=0 is crucial for creating a statically linked binary,
-# which makes it portable and suitable for a minimal base image like 'alpine' or 'scratch'.
+# CGO_ENABLED=0 is crucial for creating a statically linked binary which makes it portable.
 RUN CGO_ENABLED=0 go build -o epoll ./cmd/epoll/main.go
 
 # --- Runtime Stage ---
@@ -40,6 +38,7 @@ RUN echo "Port: ${PORT}, Max Listeners: ${MAX_LISTENERS}"
 # CMD ["--port", "${PORT}", "--maxListeners", "${MAX_LISTENERS}"]
 
 # Create a startup script.
+# Note - ENTRYPOINT and CMD command was not working. So had to do this hack.
 RUN echo '#!/bin/sh' > /app/start.sh && \
     echo 'exec /app/epoll --port $PORT --maxListeners $MAX_LISTENERS' >> /app/start.sh && \
     chmod +x /app/start.sh

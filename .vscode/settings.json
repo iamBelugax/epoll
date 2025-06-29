@@ -7,8 +7,12 @@
     "EPOLLHUP",
     "EPOLLIN",
     "GOARCH",
+    "goroutines",
+    "netcat",
     "netgo",
-    "Nilotpal"
+    "Nilotpal",
+    "REUSEPORT",
+    "tcpkali"
   ],
   "go.toolsEnvVars": { "GOOS": "linux" }
 }

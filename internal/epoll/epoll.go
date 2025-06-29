@@ -213,7 +213,80 @@ func (s *Server) startListener(id int) {
 					continue
 				}
 				s.log.Printf("Listener %d: Accepted new connection, clientFd: %d\n", id, clientFd)
+			} else {
+				// Data is ready to be read. Call the handler function.
+				if event.Events&syscall.EPOLLIN != 0 {
+					s.handleClient(epollFd, fd, id)
+				} else if event.Events&(syscall.EPOLLHUP|syscall.EPOLLERR) != 0 {
+					// Client hung up or error.
+					s.log.Printf("Listener %d: Connection error or hung up on clientFd: %d\n", id, fd)
+					s.closeClient(epollFd, fd, id)
+				}
 			}
 		}
 	}
+}
+
+// handleClient processes data from a ready client socket.
+// It reads all available data in edge-triggered mode and echoes it back.
+func (s *Server) handleClient(epollFd int, clientFd int, listenerId int) {
+	buffer := make([]byte, MAX_BUFFER_SIZE)
+
+	// In edge-triggered mode (EPOLLET), we continue the read loop to get all
+	// pending data from the kernel buffer. The loop continues until syscall.Read
+	// returns EAGAIN/EWOULDBLOCK or 0.
+	for {
+		nRead, err := syscall.Read(clientFd, buffer)
+		if err != nil {
+			// Check if the error is EAGAIN or EWOULDBLOCK, which means
+			// we've read all available data for now in non-blocking mode.
+			if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
+				return
+			}
+
+			// For other errors (e.g., connection reset by peer), close the connection.
+			s.log.Printf("Listener %d: Error reading from clientFd %d: %v\n", listenerId, clientFd, err)
+			s.closeClient(epollFd, clientFd, listenerId)
+			return
+		}
+
+		// syscall.Read returns 0 when the client performs an orderly shutdown.
+		if nRead == 0 {
+			s.log.Printf("Listener %d: Client closed connection on clientFd: %d\n", listenerId, clientFd)
+			s.closeClient(epollFd, clientFd, listenerId)
+			return
+		}
+
+		// Data received, echo it back to the client.
+		nWritten, err := syscall.Write(clientFd, buffer[:nRead])
+		if err != nil {
+			s.log.Printf("Listener %d: Error writing to clientFd %d: %v\n", listenerId, clientFd, err)
+			s.closeClient(epollFd, clientFd, listenerId)
+			return
+		}
+
+		if nWritten != nRead {
+			s.log.Printf(
+				"Listener %d: Warning: Did not write all data back to clientFd %d. Wrote %d of %d bytes.\n",
+				listenerId, clientFd, nWritten, nRead,
+			)
+		}
+	}
+}
+
+// closeClient cleans up a client connection by closing the socket
+// and removing it from the epoll instance.
+func (s *Server) closeClient(epollFd int, clientFd int, listenerId int) {
+	// Remove the file descriptor from the epoll instance.
+	if err := syscall.EpollCtl(epollFd, syscall.EPOLL_CTL_DEL, clientFd, nil); err != nil {
+		s.log.Printf("Listener %d: Error removing clientFd %d from epoll: %v\n", listenerId, clientFd, err)
+	}
+
+	// Close the client socket file descriptor.
+	if err := syscall.Close(clientFd); err != nil {
+		s.log.Printf("Listener %d: Error closing clientFd %d: %v\n", listenerId, clientFd, err)
+		return
+	}
+
+	s.log.Printf("Listener %d: Closed connection on clientFd: %d\n", listenerId, clientFd)
 }

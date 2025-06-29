@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -9,14 +10,12 @@ import (
 	"syscall"
 )
 
-var (
-	// MAX_EVENTS is the maximum number of events to retrieve in a single epoll_wait call.
-	// This limits the batch size of events processed in each iteration of the event loop.
-	MAX_EVENTS = 1024
-
-	// MAX_BUFFER_SIZE is the buffer size for reading data from client sockets in a single call.
-	MAX_BUFFER_SIZE = 4096
-)
+// State represents the current operational state of a Worker.
+//
+// It tracks the lifecycle of a Worker through various phases from initialization
+// to execution and finally closure, allowing for proper state management and
+// validation of operations based on the current state.
+type State string
 
 // Worker represents an individual listener process that handles its own connections.
 //
@@ -32,8 +31,33 @@ type Worker struct {
 	port      uint        // The TCP port on which this worker listens.
 	wakeUpRfd int         // The read end of the wake-up pipe, used to interrupt epoll_wait.
 	wakeUpWfd int         // The write end of the wake-up pipe, used to signal worker shutdown.
+	state     State       // Current operational state (INITIALIZED, EXECUTING, or CLOSED).
 	log       *log.Logger // Logger for worker events and errors.
 }
+
+var (
+	// MAX_EVENTS is the maximum number of events to retrieve in a single epoll_wait call.
+	// This limits the batch size of events processed in each iteration of the event loop.
+	MAX_EVENTS = 1024
+
+	// MAX_BUFFER_SIZE is the buffer size for reading data from client sockets in a single call.
+	MAX_BUFFER_SIZE = 4096
+
+	// INITIALIZED indicates that a Worker has been created but has not yet started processing connections.
+	// In this state, the Worker has been allocated resources but is not yet actively listening.
+	INITIALIZED State = "INITIALIZED"
+
+	// EXECUTING indicates that a Worker is actively running and processing connections.
+	// In this state, the Worker is listening for incoming connections and handling client requests.
+	EXECUTING State = "EXECUTING"
+
+	// CLOSED indicates that a Worker has been shut down and is no longer processing connections.
+	// In this state, the Worker has released its resources and cannot be restarted.
+	CLOSED State = "CLOSED"
+
+	// ErrClosed is returned when attempting to perform operations on a Worker that has already been closed.
+	ErrWorkerClosed = errors.New("worker: operation failed because worker is already closed")
+)
 
 // New creates a worker instance with the given ID, port, and logger.
 //
@@ -45,9 +69,6 @@ type Worker struct {
 //   - id: Unique identifier for the worker
 //   - port: TCP port on which this worker will listen
 //   - logger: Logger for worker events (or creates a default one if nil)
-//
-// Returns:
-//   - Initialized Worker and any error encountered during setup
 func New(id int, port uint, logger *log.Logger) (*Worker, error) {
 	// Use provided logger or create a default one.
 	if logger == nil {
@@ -94,6 +115,7 @@ func New(id int, port uint, logger *log.Logger) (*Worker, error) {
 		port:      port,
 		wakeUpRfd: rfd,
 		wakeUpWfd: wfd,
+		state:     INITIALIZED,
 		log:       logger,
 	}, nil
 }
@@ -107,6 +129,13 @@ func New(id int, port uint, logger *log.Logger) (*Worker, error) {
 //
 // The event loop continues until a shutdown signal is received through the wake-up pipe.
 func (w *Worker) Start() {
+	// Set the worker state to EXECUTING and ensure it will be set to CLOSED when this function returns.
+	w.state = EXECUTING
+	defer func() {
+		w.state = CLOSED
+		w.log.Printf("Listener %d: Worker state changed to %s\n", w.id, w.state)
+	}()
+
 	w.log.Printf("Starting listener worker with id %d\n", w.id)
 
 	// ============ SOCKET SETUP PHASE ============
@@ -254,7 +283,7 @@ func (w *Worker) Start() {
 				w.log.Printf("Listener %d: Woken up by pipe event on fd %d.\n", w.id, fd)
 
 				// Close the wake up pipe file descriptors when stopping is complete.
-				w.closeReadWritePipe(epollFd)
+				w.cleanupWakeUpPipeAndEpoll(epollFd)
 				continue
 			}
 
@@ -337,9 +366,26 @@ func (w *Worker) Start() {
 // the epoll_wait call in the event loop, causing the worker to begin
 // its shutdown sequence.
 //
-// Returns:
-//   - Error if any issue occurs during signaling.
+// The behavior varies based on the current state of the worker:
+//   - CLOSED: Returns ErrClosed without taking any action
+//   - INITIALIZED: Directly closes the wake-up pipe file descriptors
+//   - EXECUTING: Writes a wake-up byte to the pipe to interrupt the event loop
 func (w *Worker) Stop() error {
+	// If the worker is already closed, return ErrClosed.
+	if w.state == CLOSED {
+		return ErrWorkerClosed
+	}
+
+	// If the worker is only initialized but not executing yet,
+	// we can directly close the wake-up pipe file descriptors
+	if w.state == INITIALIZED {
+		if err := w.closeWakeUpPipeFds(); err != nil {
+			return err
+		}
+		w.log.Printf("Closed wake up pipe fds %d (read) and %d (write)\n", w.wakeUpRfd, w.wakeUpWfd)
+		return nil
+	}
+
 	// Write a byte to the wake up pipe. This will make the read end of the pipe
 	// readable, causing epoll_wait in each listener goroutine to return
 	// with an event for the pipe's read file descriptor. This wakes up
@@ -357,10 +403,6 @@ func (w *Worker) Stop() error {
 // In edge-triggered mode, we must read ALL available data until EAGAIN/EWOULDBLOCK
 // is returned, as epoll will only notify us again when there's a state change
 // (empty buffer -> data available).
-//
-// Parameters:
-//   - epollFd: File descriptor of the epoll instance.
-//   - clientFd: File descriptor of the client socket.
 func (w *Worker) handleClient(epollFd int, clientFd int) {
 	buffer := make([]byte, MAX_BUFFER_SIZE)
 
@@ -409,10 +451,6 @@ func (w *Worker) handleClient(epollFd int, clientFd int) {
 
 // closeClient cleans up a client connection by removing it from the epoll
 // instance and closing the socket file descriptor.
-//
-// Parameters:
-//   - epollFd: File descriptor of the epoll instance
-//   - clientFd: File descriptor of the client socket to close
 func (w *Worker) closeClient(epollFd int, clientFd int) {
 	// Remove the file descriptor from the epoll instance.
 	// The last argument (event) can be nil for EPOLL_CTL_DEL.
@@ -429,25 +467,42 @@ func (w *Worker) closeClient(epollFd int, clientFd int) {
 	w.log.Printf("Listener %d: Closed connection on clientFd: %d\n", w.id, clientFd)
 }
 
-// closeReadWritePipe closes both ends of the wake-up pipe.
-// This is called during worker shutdown to clean up resources.
-func (w *Worker) closeReadWritePipe(epollFd int) {
-	// Remove the wake-up fd from epoll.
+// cleanupWakeUpPipeAndEpoll removes the wake-up pipe's read file descriptor
+// from the epoll instance and then closes both ends of the pipe.
+func (w *Worker) cleanupWakeUpPipeAndEpoll(epollFd int) {
+	// Remove the wake-up fd from epoll to stop receiving events for it.
 	if err := syscall.EpollCtl(epollFd, syscall.EPOLL_CTL_DEL, w.wakeUpRfd, nil); err != nil {
+		// Log the error but continue with closing the FDs.
 		w.log.Printf("Listener %d: Error removing wakeUpRfd %d from epoll: %v\n", w.id, w.wakeUpRfd, err)
 	}
 
-	// Close the wake up pipe file descriptors when stopping is complete.
-	// This is important to release resources. Defer this after the WaitGroup.
+	// Proceed to close the file descriptors for the pipe.
+	if err := w.closeWakeUpPipeFds(); err != nil {
+		w.log.Println(err)
+	}
+}
+
+// closeWakeUpPipeFds closes the read and write file descriptors
+// of the wake-up pipe. It returns an error if either close operation fails.
+// If both fail, the returned error is a combination of both failure errors.
+func (w *Worker) closeWakeUpPipeFds() (err error) {
 	w.log.Printf("Closing wake up pipe fds %d (read) and %d (write)\n", w.wakeUpRfd, w.wakeUpWfd)
 
-	if err := syscall.Close(w.wakeUpRfd); err != nil {
-		w.log.Printf("Error closing wake up pipe read fd %d: %v\n", w.wakeUpRfd, err)
+	var readErr error
+	// Close the read end of the pipe.
+	if e := syscall.Close(w.wakeUpRfd); e != nil {
+		// Wrap the original error with context.
+		readErr = fmt.Errorf("error closing wake up pipe read fd %d: %w", w.wakeUpRfd, e)
+		w.log.Printf("%v", readErr)
 	}
 
-	if err := syscall.Close(w.wakeUpWfd); err != nil {
-		w.log.Printf("Error closing wake up pipe write fd %d: %v\n", w.wakeUpWfd, err)
+	var writeErr error
+	// Close the write end of the pipe.
+	if e := syscall.Close(w.wakeUpWfd); e != nil {
+		// Wrap the original error with context.
+		writeErr = fmt.Errorf("error closing wake up pipe write fd %d: %w", w.wakeUpWfd, e)
+		w.log.Printf("%v", writeErr)
 	}
 
-	w.log.Printf("Closed wake up pipe fds %d (read) and %d (write)\n", w.wakeUpRfd, w.wakeUpWfd)
+	return errors.Join(readErr, writeErr)
 }

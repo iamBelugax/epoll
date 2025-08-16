@@ -5,7 +5,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/iamBelugaa/epoll-test/internal/worker"
+	"github.com/iamBelugax/epoll/internal/worker"
 )
 
 func NewServer(port, maxListeners uint) (*Server, error) {

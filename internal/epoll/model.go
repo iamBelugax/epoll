@@ -4,7 +4,7 @@ import (
 	"log"
 	"sync"
 
-	"github.com/iamBelugaa/epoll-test/internal/worker"
+	"github.com/iamBelugax/epoll/internal/worker"
 )
 
 type Server struct {

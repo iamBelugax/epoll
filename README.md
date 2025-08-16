@@ -7,7 +7,7 @@
 1.  **Clone:**
 
     ```bash
-    git clone https://github.com/iamBelugaa/epoll-test.git
+    git clone https://github.com/iamBelugax/epoll.git
     cd epoll
     ```
 

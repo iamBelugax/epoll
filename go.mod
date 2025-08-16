@@ -1,3 +1,3 @@
-module github.com/iamBelugaa/epoll-test
+module github.com/iamBelugax/epoll
 
 go 1.24.2

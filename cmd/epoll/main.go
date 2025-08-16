@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"syscall"
 
-	"github.com/iamBelugaa/epoll-test/internal/epoll"
+	"github.com/iamBelugax/epoll/internal/epoll"
 )
 
 var (
